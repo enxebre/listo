@@ -1,0 +1,110 @@
+#cloud-config
+coreos:
+  units:
+    - name: traefik.service
+      command: start
+      content: |
+        [Unit]
+        Description=Traefik Container
+        After=docker.service setup-listo-environment.service
+        Requires=docker.service setup-listo-environment.service
+
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker stop %n
+        ExecStartPre=-/usr/bin/docker rm %n
+        ExecStartPre=/usr/bin/docker pull traefik
+        ExecStart=/usr/bin/docker run --net=listo --rm --name %n -p 8080:8080 -p 80:80  -v /home/core/listo/traefik.toml:/etc/traefik/traefik.toml traefik --web --logLevel=DEBUG
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: ghost.service
+      command: start
+      content: |
+        [Unit]
+        Description=Ghost Container
+        After=docker.service setup-listo-environment.service
+        Requires=docker.service setup-listo-environment.service
+
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        ExecStartPre=-/usr/bin/docker stop %n
+        ExecStartPre=-/usr/bin/docker rm %n
+        ExecStartPre=/usr/bin/docker pull traefik
+        ExecStart=/usr/bin/docker run --net=listo --rm --name %n ghost
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: setup-listo-environment.service
+      command: start
+      content: |
+        [Unit]
+        Description=Setup Ghost Environment
+        After=docker.service
+        Requires=docker.service
+
+        [Service]
+        ExecStartPre=-/usr/bin/mkdir -p /opt/bin
+        ExecStartPre=/usr/bin/chmod +x /opt/bin/setup-listo-environment
+        ExecStart=/opt/bin/setup-listo-environment
+        RemainAfterExit=yes
+        Type=oneshot
+
+write_files:
+  - path: /home/core/listo/Dockerfile
+    permissions: 0644
+    content: |
+{{ .Dockerfile | indent 6}}
+
+write_files:
+  - path: /home/core/listo/app/Dockerfile-ghost
+    permissions: 0644
+    content: |
+        FROM listo-stackstmith
+        COPY . /app
+        WORKDIR /app
+        RUN npm install --production
+        CMD ["npm", "start", "--production"]
+
+  - path: /opt/bin/setup-listo-environment
+    permissions: 0644
+    content: |
+      #!/bin/bash
+      pushd /home/core/listo/
+      docker build -f Dockerfile -t listo-stackstmith .
+      curl -L -O https://github.com/TryGhost/Ghost/releases/download/0.11.8/Ghost-0.11.8.zip
+      unzip Ghost-0.11.8.zip -d ./app
+      docker build -f ./app/Dockerfile-ghost -t listo-stackstmith-ghost ./app
+      docker network create listo
+      popd
+
+  - path: /home/core/listo/traefik.toml
+    permissions: 0644
+    content: |
+      # traefik.toml
+      logLevel = "DEBUG"
+      defaultEntryPoints = ["http"]
+      [entryPoints]
+        [entryPoints.http]
+        address = ":80"
+
+      [file]
+
+      # rules
+      [backends]
+        [backends.backend1]
+          [backends.backend1.circuitbreaker]
+            expression = "NetworkErrorRatio() > 0.5"
+          [backends.backend1.servers.server1]
+          url = "http://ghost.service:2368"
+          weight = 1
+
+      [frontends]
+        [frontends.frontend1]
+        backend = "backend1"
+          [frontends.frontend1.routes.by_host]
+          rule = "Host:{{ .Domain }}"

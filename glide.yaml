@@ -1,0 +1,8 @@
+package: github.com/listo
+import:
+- package: github.com/gorilla/mux
+- package: golang.org/x/oauth2
+- package: github.com/aws/aws-sdk-go
+- package: github.com/Masterminds/cookoo
+- package: github.com/Masterminds/sprig
+  version: ^2.10.0
